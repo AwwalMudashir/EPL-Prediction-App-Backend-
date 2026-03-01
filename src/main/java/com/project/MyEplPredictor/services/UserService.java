@@ -74,4 +74,12 @@ public class UserService {
 
         return ResponseEntity.ok(response);
     }
+
+    public ResponseEntity<?> allUsers() {
+        try{
+            return new ResponseEntity<>(userRepo.findAll(),HttpStatus.OK);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
 }

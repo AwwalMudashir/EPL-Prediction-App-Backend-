@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
 public class GameweekResponseDto {
     private Long id;
     private int weekNumber;
-    private String season;
+    private int season;
     private LocalDateTime startDate;
     private LocalDateTime endDate;
     private GameweekStatus status;

@@ -6,10 +6,7 @@ import com.project.MyEplPredictor.models.User;
 import com.project.MyEplPredictor.services.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/user")
@@ -25,5 +22,10 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<?> login(@RequestBody LoginDto user){
         return userService.login(user);
+    }
+
+    @GetMapping("all")
+    public ResponseEntity<?> allUsers(){
+        return userService.allUsers();
     }
 }

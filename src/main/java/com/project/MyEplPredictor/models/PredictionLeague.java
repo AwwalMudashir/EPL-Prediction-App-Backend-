@@ -5,6 +5,7 @@ import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 
@@ -34,6 +35,6 @@ public class PredictionLeague {
     /*
      * One league has MANY members
      */
-    @OneToMany(mappedBy = "league")
-    private List<LeagueMember> members;
+    @OneToMany(mappedBy = "league", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<LeagueMember> members = new ArrayList<>();
 }

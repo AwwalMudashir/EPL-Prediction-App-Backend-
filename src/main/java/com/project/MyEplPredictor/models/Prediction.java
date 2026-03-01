@@ -23,8 +23,8 @@ public class Prediction {
 
     @ManyToOne
     @JoinColumn(name = "match_id")
-    private Match match;
-    private int pointsAwarded;
+    private PMatch PMatch;
+    private Integer pointsAwarded;
     private int predictedHomeScore;
     private int predictedAwayScore;
 

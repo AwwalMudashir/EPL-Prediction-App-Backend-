@@ -16,6 +16,7 @@ import java.util.List;
 @Getter
 @Setter
 @ToString
+@Table(name = "")
 public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

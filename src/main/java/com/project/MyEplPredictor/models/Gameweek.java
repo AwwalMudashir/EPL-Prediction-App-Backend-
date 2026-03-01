@@ -1,10 +1,9 @@
 package com.project.MyEplPredictor.models;
 
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.*;
 import lombok.*;
+
+import java.time.LocalDateTime;
 
 @Entity
 @NoArgsConstructor
@@ -18,6 +17,11 @@ public class Gameweek {
     private Long id;
 
     private int weekNumber;
-    private String season;
-    private Boolean isCurrent;
+    private int season;
+
+    private LocalDateTime startDate;
+    private LocalDateTime endDate;
+
+    @Enumerated(EnumType.STRING)
+    private GameweekStatus status = GameweekStatus.UPCOMING;
 }

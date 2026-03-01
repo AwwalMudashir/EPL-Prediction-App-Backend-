@@ -6,13 +6,17 @@ import lombok.*;
 
 import java.time.LocalDateTime;
 
+// 'MATCH' is a reserved word in many databases (including MySQL),
+// so we explicitly map the entity to a different table name.  Using a
+// pluralized form also better reflects the collection semantics.
 @Entity
+@Table(name = "matches")
 @NoArgsConstructor
 @AllArgsConstructor
 @Getter
 @Setter
 @ToString
-public class Match {
+public class PMatch {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -21,9 +25,11 @@ public class Match {
     private String homeTeam;
     private String awayTeam;
     private LocalDateTime kickoffTime;
-    private int homeScore;
-    private int awayScore;
-    private MatchStatus status;
+    private Integer homeScore;
+    private Integer awayScore;
+
+    @Enumerated(EnumType.STRING)
+    private MatchStatus status = MatchStatus.UPCOMING;
 
     @ManyToOne
     @JoinColumn(name = "gameweek_id")

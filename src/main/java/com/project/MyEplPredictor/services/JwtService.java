@@ -5,14 +5,11 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
 
-import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
-import java.security.Key;
-import java.security.NoSuchAlgorithmException;
-import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
@@ -21,34 +18,29 @@ import java.util.function.Function;
 @Service
 public class JwtService {
 
-    private String secretKey = "";
-    //  Used to sign the JWT so nobody can fake it.
+    private final String secretKey;
+    private final long jwtExpirationMs;
 
-    public JwtService(){
-        try {
-            KeyGenerator keyGen = KeyGenerator.getInstance("HmacSHA256");
-            // KeyGenerator with "HmacSHA256" → Generates a secure random key for signing tokens.
-
-            SecretKey sk = keyGen.generateKey(); // returns an object of SecretKey
-
-            secretKey = Base64.getEncoder().encodeToString(sk.getEncoded()); // encodes to a byte array
-            // Base64.getEncoder() → Converts the binary secret key into a text string so it can be stored/used easily.
-
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
+    public JwtService(@Value("${jwt.secret}") String secretKey,
+                      @Value("${jwt.expiration-ms:3600000}") long jwtExpirationMs) {
+        if (secretKey == null || secretKey.isBlank()) {
+            throw new IllegalStateException("jwt.secret must be configured with a non-empty value");
         }
-
+        this.secretKey = secretKey;
+        this.jwtExpirationMs = jwtExpirationMs;
     }
 
     public String generateToken(User user) {
         Map<String, Object> claims = new HashMap<>();
 
+        long now = System.currentTimeMillis();
+
         return Jwts.builder()
                 .claims()
                 .add(claims)
-                .subject(user.getUsername())
-                .issuedAt(new Date(System.currentTimeMillis()))
-                .expiration(new Date(System.currentTimeMillis() + 60 * 60 * 100)) // That’s just 360,000 ms or 360 seconds or 6 minutes
+                .subject(user.getEmail())
+            .issuedAt(new Date(now))
+            .expiration(new Date(now + jwtExpirationMs))
                 .and()
                 .signWith(getKey())
                 .compact();
