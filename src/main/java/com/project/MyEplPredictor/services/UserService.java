@@ -82,4 +82,9 @@ public class UserService {
             throw new RuntimeException(e);
         }
     }
+
+    // helper for controller use
+    public User findByEmail(String email) {
+        return userRepo.findByEmail(email);
+    }
 }
