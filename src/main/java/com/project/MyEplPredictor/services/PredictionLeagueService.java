@@ -145,6 +145,34 @@ public class PredictionLeagueService {
         }
     }
 
+    public ResponseEntity<?> getLeaguesCreatedByUser(Long userId) {
+        try {
+            if (!userRepo.existsById(userId)) {
+                return new ResponseEntity<>("User doesn't exist", HttpStatus.BAD_REQUEST);
+            }
+
+            List<PredictionLeague> leagues = plrepo.findByCreatedBy_Id(userId);
+            List<PredictionLeagueResponseDto> dtos = leagues.stream()
+                    .map(this::mapToResponseDto)
+                    .collect(Collectors.toList());
+            return ResponseEntity.ok(dtos);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    public ResponseEntity<?> getLeague(Long leagueId) {
+        try {
+            PredictionLeague league = plrepo.findById(leagueId).orElse(null);
+            if (league == null) {
+                return new ResponseEntity<>("League not found", HttpStatus.NOT_FOUND);
+            }
+            return ResponseEntity.ok(mapToResponseDto(league));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private PredictionLeagueResponseDto mapToResponseDto(PredictionLeague league) {
         UserSummaryDto creator = toUserSummary(league.getCreatedBy());
 

@@ -28,9 +28,20 @@ public class PredictionLeagueController {
         return plservice.getUserLeagues(userId);
     }
 
+    // leagues created by a specific user (not just membership)
+    @GetMapping("/user/{userId}/created")
+    public ResponseEntity<?> getCreatedLeagues(@PathVariable Long userId) {
+        return plservice.getLeaguesCreatedByUser(userId);
+    }
+
     @GetMapping("/allLeagues")
     public ResponseEntity<?> allLeagues(){
         return plservice.getAllLeagues();
+    }
+
+    @GetMapping("/{leagueId}")
+    public ResponseEntity<?> getLeague(@PathVariable Long leagueId) {
+        return plservice.getLeague(leagueId);
     }
 
     @GetMapping("/{leagueId}/standings")

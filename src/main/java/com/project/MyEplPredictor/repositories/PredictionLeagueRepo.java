@@ -4,9 +4,14 @@ import com.project.MyEplPredictor.models.PredictionLeague;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+
 import java.util.Optional;
 
 @Repository
 public interface PredictionLeagueRepo extends JpaRepository<PredictionLeague,Long> {
 	Optional<PredictionLeague> findByInviteCode(String inviteCode);
+
+	// returns leagues where the given user is the creator
+	List<PredictionLeague> findByCreatedBy_Id(Long userId);
 }
