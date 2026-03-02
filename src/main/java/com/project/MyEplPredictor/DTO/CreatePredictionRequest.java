@@ -12,6 +12,6 @@ import lombok.Setter;
 public class CreatePredictionRequest {
     private Long userId;
     private Long matchId;
-    private int predictedHomeScore;
-    private int predictedAwayScore;
+    private Integer predictedHomeScore;
+    private Integer predictedAwayScore;
 }

@@ -378,6 +378,7 @@ public class GameweekService {
 			return List.of();
 		}
 
+		log.info("syncing fixtures from API (tournamentId={})", tournamentId);
 		String uri = String.format("%s/fixtures?tournamentId=%d&hasOdds=true", bet365BaseUrl, tournamentId);
 		HttpRequest request = HttpRequest.newBuilder()
 				.uri(URI.create(uri))
@@ -408,6 +409,7 @@ public class GameweekService {
 					fixtures.add(new FixturePayload(fixtureId, home, away, kickoff));
 				}
 			}
+			log.info("fixture sync returned {} entries", fixtures.size());
 			return fixtures;
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();

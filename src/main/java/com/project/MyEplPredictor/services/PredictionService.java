@@ -12,6 +12,8 @@ import com.project.MyEplPredictor.models.User;
 import com.project.MyEplPredictor.repositories.MatchRepo;
 import com.project.MyEplPredictor.repositories.PredictionRepo;
 import com.project.MyEplPredictor.repositories.UserRepo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,10 +22,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import com.project.MyEplPredictor.DTO.UserPointsDto;
+import java.util.Collections;
 
 @Service
 @Transactional
 public class PredictionService {
+
+	private static final Logger log = LoggerFactory.getLogger(PredictionService.class);
 
 	private final PredictionRepo predictionRepo;
 	private final MatchRepo matchRepo;
@@ -38,20 +44,30 @@ public class PredictionService {
 	}
 
 	public PredictionResponseDto createPrediction(CreatePredictionRequest request) {
-		PMatch PMatch = matchRepo.findById(request.getMatchId())
+		PMatch pmatch = matchRepo.findById(request.getMatchId())
 				.orElseThrow(() -> new IllegalArgumentException("Match not found"));
-		ensurePredictionWindowOpen(PMatch);
+		ensurePredictionWindowOpen(pmatch);
 
 		User user = userRepo.findById(request.getUserId())
 				.orElseThrow(() -> new IllegalArgumentException("User not found"));
 
-		boolean alreadyPredicted = predictionRepo.existsByMatch_IdAndUser_Id(PMatch.getId(), user.getId());
+		// bail out early if somehow we have a null identifier; this
+		// prevents an exception during JPQL construction and also
+		// guards against bad input coming from the frontend.
+		if (pmatch.getId() == null || user.getId() == null) {
+			throw new IllegalStateException("Cannot check prediction existence; invalid user or match");
+		}
+		boolean alreadyPredicted = predictionRepo.existsByPMatch_IdAndUser_Id(pmatch.getId(), user.getId());
 		if (alreadyPredicted) {
 			throw new IllegalStateException("Prediction already submitted for this match");
 		}
 
+		if (request.getPredictedHomeScore() == null || request.getPredictedAwayScore() == null) {
+			throw new IllegalArgumentException("Scores must be provided");
+		}
+
 		Prediction prediction = new Prediction();
-		prediction.setPMatch(PMatch);
+		prediction.setPMatch(pmatch);
 		prediction.setUser(user);
 		prediction.setPredictedHomeScore(request.getPredictedHomeScore());
 		prediction.setPredictedAwayScore(request.getPredictedAwayScore());
@@ -63,7 +79,13 @@ public class PredictionService {
 
 	@Transactional(readOnly = true)
 	public List<PredictionResponseDto> getUserPredictionsForGameweek(Long userId, Long gameweekId) {
-		List<Prediction> predictions = predictionRepo.findByUser_IdAndMatch_Gameweek_Id(userId, gameweekId);
+		// protect against callers supplying null values which would result in
+		// a "Binding property is null" exception when the query is constructed.
+		if (userId == null || gameweekId == null) {
+			log.warn("getUserPredictionsForGameweek called with null id (user={}, gameweek={})", userId, gameweekId);
+			return List.of();
+		}
+		List<Prediction> predictions = predictionRepo.findForUserAndGameweek(userId, gameweekId);
 		return predictions.stream().map(this::toDto).collect(Collectors.toList());
 	}
 
@@ -71,6 +93,10 @@ public class PredictionService {
 		Prediction prediction = predictionRepo.findById(predictionId)
 				.orElseThrow(() -> new IllegalArgumentException("Prediction not found"));
 		ensurePredictionWindowOpen(prediction.getPMatch());
+
+		if (request.getPredictedHomeScore() == null || request.getPredictedAwayScore() == null) {
+			throw new IllegalArgumentException("Scores must be provided");
+		}
 
 		prediction.setPredictedHomeScore(request.getPredictedHomeScore());
 		prediction.setPredictedAwayScore(request.getPredictedAwayScore());
@@ -91,7 +117,7 @@ public class PredictionService {
 			throw new IllegalStateException("Match scores missing");
 		}
 
-		List<Prediction> pending = predictionRepo.findByMatch_IdAndPointsAwardedIsNull(matchId);
+		List<Prediction> pending = predictionRepo.findByPMatch_IdAndPointsAwardedIsNull(matchId);
 		if (pending.isEmpty()) {
 			return;
 		}
@@ -113,12 +139,30 @@ public class PredictionService {
 	}
 
 	public void recalculatePredictionsForMatch(Long matchId) {
-		List<Prediction> predictions = predictionRepo.findByMatch_Id(matchId);
+		List<Prediction> predictions = predictionRepo.findByPMatch_Id(matchId);
 		for (Prediction prediction : predictions) {
 			prediction.setPointsAwarded(null);
 		}
 		predictionRepo.saveAll(predictions);
 		scorePredictionsForMatch(matchId);
+	}
+
+	@Transactional(readOnly = true)
+	public List<PredictionResponseDto> getUserPredictions(Long userId) {
+		if (userId == null) {
+			log.warn("getUserPredictions called with null userId");
+			return Collections.emptyList();
+		}
+		List<Prediction> predictions = predictionRepo.findByUser_Id(userId);
+		// sort by match kickoff time descending so most recent first
+		return predictions.stream()
+			.sorted((a, b) -> {
+				if (a.getPMatch() == null || b.getPMatch() == null) return 0;
+				return b.getPMatch().getKickoffTime()
+					.compareTo(a.getPMatch().getKickoffTime());
+			})
+			.map(this::toDto)
+			.collect(Collectors.toList());
 	}
 
 	@Transactional(readOnly = true)
@@ -138,6 +182,22 @@ public class PredictionService {
 			totals.merge(gameweek.getId(), points, Integer::sum);
 		}
 		return totals;
+	}
+
+	@Transactional(readOnly = true)
+	public List<UserPointsDto> getGlobalPoints() {
+		List<Prediction> all = predictionRepo.findByPointsAwardedIsNotNull();
+		Map<Long, UserPointsDto> map = new HashMap<>();
+		for (Prediction p : all) {
+			if (p.getUser() == null) continue;
+			Long uid = p.getUser().getId();
+			UserPointsDto dto = map.computeIfAbsent(uid, id ->
+				new UserPointsDto(id, p.getUser().getUsername(), 0));
+			dto.setTotalPoints(dto.getTotalPoints() + p.getPointsAwarded());
+		}
+		return map.values().stream()
+			.sorted((a, b) -> b.getTotalPoints().compareTo(a.getTotalPoints()))
+			.collect(Collectors.toList());
 	}
 
 	private void ensurePredictionWindowOpen(PMatch PMatch) {

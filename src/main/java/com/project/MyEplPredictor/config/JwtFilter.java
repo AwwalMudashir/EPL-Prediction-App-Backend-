@@ -47,14 +47,28 @@ public class JwtFilter extends OncePerRequestFilter {
 
 //        So all we have to do is get the token and validate it.
 
+        // bypass JWT parsing for authentication endpoints; they should be publicly accessible
+        String path = request.getServletPath();
+        if ("/user/login".equals(path) || "/user/register".equals(path)) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String authHeader = request.getHeader("Authorization");
         String token = null; // Will hold the raw JWT string if present.
         String username = null; // Will hold the username extracted from the token.
 
         if (authHeader != null && authHeader.startsWith("Bearer ")){
-            token = authHeader.split(" ")[1];
-            // Ask JwtService to parse and pull the 'sub' (subject) claim, i.e., the username.
-            username = jwtService.extractUsername(token);
+            token = authHeader.substring(7);
+            try {
+                // extractUsername can throw ExpiredJwtException or other parsing errors;
+                // treat them as an absent username rather than bubbling up a stack trace.
+                username = jwtService.extractUsername(token);
+            } catch (io.jsonwebtoken.ExpiredJwtException e) {
+                logger.debug("JWT token expired; allowing request to proceed unauthenticated", e);
+            } catch (Exception e) {
+                logger.warn("Failed to parse JWT token, ignoring", e);
+            }
         }
 
         if (username != null && SecurityContextHolder.getContext().getAuthentication() == null){

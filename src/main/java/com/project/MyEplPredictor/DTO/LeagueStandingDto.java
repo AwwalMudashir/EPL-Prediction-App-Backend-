@@ -9,7 +9,8 @@ import lombok.Setter;
 @AllArgsConstructor
 @Getter
 @Setter
-public class UpdatePredictionRequest {
-    private Integer predictedHomeScore;
-    private Integer predictedAwayScore;
+public class LeagueStandingDto {
+    private UserSummaryDto user;
+    private int totalPoints;
+    private int rank;
 }
