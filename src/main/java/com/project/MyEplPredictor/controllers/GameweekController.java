@@ -53,6 +53,17 @@ public class GameweekController {
 		return ResponseEntity.ok(gameweekService.syncFixturesFromApi());
 	}
 
+	@PostMapping("/{gameweekId}/sync-results")
+	public ResponseEntity<List<MatchResponseDto>> syncResults(@PathVariable Long gameweekId) {
+		return ResponseEntity.ok(gameweekService.syncResultsForGameweek(gameweekId));
+	}
+
+	@PostMapping("/current/sync-results")
+	public ResponseEntity<List<MatchResponseDto>> syncResultsCurrent() {
+		GameweekResponseDto gw = gameweekService.getCurrentGameweek();
+		return ResponseEntity.ok(gameweekService.syncResultsForGameweek(gw.getId()));
+	}
+
 	// explicit creation endpoint described in architecture notes
 	@PostMapping("/create")
 	public ResponseEntity<com.project.MyEplPredictor.DTO.CreateGameweekResponseDto> createGameweek() {

@@ -51,8 +51,14 @@ public class PredictionLeagueService {
 
     public ResponseEntity<?> createLeague(LeagueDto league) {
         try {
+            if (league == null || league.getUserId() == null) {
+                return new ResponseEntity<>("User id must be provided", HttpStatus.BAD_REQUEST);
+            }
             Long id = league.getUserId();
             String name = league.getName();
+            if (name == null || name.isBlank()) {
+                return new ResponseEntity<>("League name must be provided", HttpStatus.BAD_REQUEST);
+            }
 
             User userCreated = userRepo.findById(id)
                     .orElse(null);

@@ -13,11 +13,13 @@ import com.project.MyEplPredictor.models.GameweekStatus;
 import com.project.MyEplPredictor.models.PMatch;
 import com.project.MyEplPredictor.repositories.GameweekRepo;
 import com.project.MyEplPredictor.repositories.MatchRepo;
+import com.project.MyEplPredictor.services.PredictionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import java.io.IOException;
 import java.net.URI;
@@ -44,6 +46,7 @@ public class GameweekService {
 
 	private final GameweekRepo gameweekRepo;
 	private final MatchRepo matchRepo;
+	private final PredictionService predictionService;
 	private final ObjectMapper objectMapper;
 	private final HttpClient httpClient;
 	private final String rapidApiKey;
@@ -54,14 +57,15 @@ public class GameweekService {
 
 	public GameweekService(GameweekRepo gameweekRepo,
 						   MatchRepo matchRepo,
+					   PredictionService predictionService,
                            DataSource dataSource,
                            @Value("${bet365.api-key}") String rapidApiKey,
                            @Value("${bet365.base-url:https://bet36528.p.rapidapi.com}") String bet365BaseUrl,
                            @Value("${bet365.tournament-id:17}") int tournamentId) {
 		this.gameweekRepo = gameweekRepo;
 		this.matchRepo = matchRepo;
+		this.predictionService = predictionService;
 		this.dataSource = dataSource;
-        // assign all final configuration fields to avoid compilation errors
         this.rapidApiKey = rapidApiKey;
         this.bet365BaseUrl = bet365BaseUrl;
         this.tournamentId = tournamentId;
@@ -372,6 +376,11 @@ public class GameweekService {
 		return dto;
 	}
 
+	/**
+	 * Fetches current fixtures from the external API.  When scores are
+	 * available they may also be present in the payload; callers should inspect
+	 * the returned nodes if they care about results.
+	 */
 	private List<FixturePayload> fetchFixturesFromApi() {
 		if (rapidApiKey == null || rapidApiKey.isBlank()) {
 			log.warn("RapidAPI key missing; fixture sync skipped");
@@ -420,6 +429,112 @@ public class GameweekService {
 		}
 	}
 
+	/**
+	 * Convenience wrapper that looks up scores for matches in a particular
+	 * gameweek, updates the corresponding {@link PMatch} entities and invokes
+	 * the prediction scoring logic for any matches that moved to finished
+	 * status.
+	 */
+	public List<MatchResponseDto> syncResultsForGameweek(Long gameweekId) {
+		List<PMatch> matches = matchRepo.findByGameweekId(gameweekId);
+		if (matches.isEmpty()) {
+			log.info("no matches found for gameweek {} when syncing results", gameweekId);
+			return List.of();
+		}
+		List<String> fixtureIds = matches.stream()
+			.map(PMatch::getFixtureId)
+			.filter(Objects::nonNull)
+			.toList();
+		log.info("requesting scores from API for {} fixtures", fixtureIds.size());
+		List<ResultPayload> results = fetchResultsFromApi(fixtureIds);
+		log.info("received {} result entries", results.size());
+		for (PMatch m : matches) {
+			for (ResultPayload r : results) {
+				if (r.fixtureId().equals(m.getFixtureId())) {
+					if (r.homeScore() != null && r.awayScore() != null) {
+						log.info("updating match {} with score {}/{}", m.getId(), r.homeScore(), r.awayScore());
+						m.setHomeScore(r.homeScore());
+						m.setAwayScore(r.awayScore());
+						m.setStatus(MatchStatus.FINISHED);
+						// award points for everyone who predicted this match
+						predictionService.scorePredictionsForMatch(m.getId());
+					}
+				} else {
+					// no-op
+				}
+			}
+		}
+		if (!matches.isEmpty()) {
+			matchRepo.saveAll(matches);
+		}
+		return matches.stream().map(this::toMatchDto).collect(Collectors.toList());
+	}
+
+	/**
+	 * Fetches full match results for the supplied fixture IDs.  The remote API
+	 * currently returns the same objects as {@link #fetchFixturesFromApi}, but
+	 * when a fixture has completed the JSON will contain the `participant1Score`
+	 * and `participant2Score` fields.  This helper filters and normalizes that
+	 * data.
+	 */
+	private List<ResultPayload> fetchResultsFromApi(List<String> fixtureIds) {
+		if (fixtureIds.isEmpty()) {
+			return List.of();
+		}
+		List<ResultPayload> results = new ArrayList<>();
+		List<FixturePayload> all = fetchFixturesFromApi();
+		for (FixturePayload f : all) {
+			if (fixtureIds.contains(f.fixtureId())) {
+				try {
+					JsonNode node = objectMapper.readTree(
+						objectMapper.writeValueAsString(f));
+					int hs = node.path("participant1Score").asInt(-1);
+					int as = node.path("participant2Score").asInt(-1);
+					Integer home = hs >= 0 ? hs : null;
+					Integer away = as >= 0 ? as : null;
+					results.add(new ResultPayload(f.fixtureId(), home, away));
+				} catch (IOException e) {
+					log.debug("error reading result payload", e);
+					results.add(new ResultPayload(f.fixtureId(), null, null));
+				}
+			}
+		}
+		return results;
+	}
+
+	/**
+	 * Scheduled task that runs once per day and attempts to pull final scores
+	 * for any matches that are still marked as UPCOMING or IN_PROGRESS.  Games
+	 * whose scores are obtained are marked FINISHED and their predictions scored
+	 * immediately; when all matches in a gameweek are finished the week is
+	 * advanced to COMPLETED.
+	 */
+	@Scheduled(cron = "0 0 2 * * ?") // every day at 2 AM
+	public void dailyScoreUpdater() {
+		log.info("running daily score sync");
+		List<Gameweek> weeks = gameweekRepo.findAll();
+		for (Gameweek gw : weeks) {
+			try {
+				List<PMatch> pending = matchRepo.findByGameweekId(gw.getId()).stream()
+					.filter(m -> m.getStatus() != MatchStatus.FINISHED)
+					.toList();
+				if (!pending.isEmpty()) {
+					syncResultsForGameweek(gw.getId());
+				}
+				boolean hasUnfinished = matchRepo.existsByGameweekIdAndStatusNot(gw.getId(), MatchStatus.FINISHED);
+				if (!hasUnfinished && gw.getStatus() != GameweekStatus.COMPLETED) {
+					gw.setStatus(GameweekStatus.COMPLETED);
+					gameweekRepo.save(gw);
+				}
+			} catch (Exception e) {
+				log.error("error during daily sync for gameweek {}", gw.getId(), e);
+			}
+		}
+	}
+
 	private record FixturePayload(String fixtureId, String homeTeam, String awayTeam, LocalDateTime kickoff) {
+	}
+
+	private record ResultPayload(String fixtureId, Integer homeScore, Integer awayScore) {
 	}
 }

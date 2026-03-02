@@ -186,15 +186,24 @@ public class PredictionService {
 
 	@Transactional(readOnly = true)
 	public List<UserPointsDto> getGlobalPoints() {
-		List<Prediction> all = predictionRepo.findByPointsAwardedIsNotNull();
+		// start by including every user with zero points so that the leaderboard
+		// never drops people just because they haven't made a prediction yet.
+		List<User> users = userRepo.findAll();
 		Map<Long, UserPointsDto> map = new HashMap<>();
-		for (Prediction p : all) {
-			if (p.getUser() == null) continue;
-			Long uid = p.getUser().getId();
-			UserPointsDto dto = map.computeIfAbsent(uid, id ->
-				new UserPointsDto(id, p.getUser().getUsername(), 0));
+		for (User u : users) {
+			if (u == null || u.getId() == null) continue;
+			map.put(u.getId(), new UserPointsDto(u.getId(), u.getUsername(), 0));
+		}
+
+		// accumulate points from any scored predictions
+		List<Prediction> scored = predictionRepo.findByPointsAwardedIsNotNull();
+		for (Prediction p : scored) {
+			if (p.getUser() == null || p.getUser().getId() == null) continue;
+			UserPointsDto dto = map.get(p.getUser().getId());
+			if (dto == null) continue; // should not happen, but be defensive
 			dto.setTotalPoints(dto.getTotalPoints() + p.getPointsAwarded());
 		}
+
 		return map.values().stream()
 			.sorted((a, b) -> b.getTotalPoints().compareTo(a.getTotalPoints()))
 			.collect(Collectors.toList());
