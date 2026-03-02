@@ -66,7 +66,7 @@ public class SecurityConfig {
         // production URL).  The value is a comma‑separated list of origins.
         String origins = System.getProperty("app.allowed.origins");
         if (origins == null) {
-            origins = "http://localhost:3000,http://localhost:5174,https://epl-predictor.netlify.app/";
+            origins = "http://localhost:3000,http://localhost:5174,https://epl-predictor.netlify.app/,https://epl-predictor-frontend-prod.vercel.app/";
         }
         configuration.setAllowedOrigins(Arrays.asList(origins.split(",")));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
