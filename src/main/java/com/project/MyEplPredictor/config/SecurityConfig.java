@@ -21,6 +21,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import java.util.Arrays;
 
 import java.util.List;
 
@@ -61,8 +62,13 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        // allow the frontend dev server origins explicitly (no wildcard when allowCredentials=true)
-        configuration.setAllowedOrigins(List.of("http://localhost:3000", "http://localhost:5174"));
+        // Allow the frontend origins defined in properties (includes local dev and
+        // production URL).  The value is a comma‑separated list of origins.
+        String origins = System.getProperty("app.allowed.origins");
+        if (origins == null) {
+            origins = "http://localhost:3000,http://localhost:5174,https://epl-predictor-frontend-5dng.vercel.app";
+        }
+        configuration.setAllowedOrigins(Arrays.asList(origins.split(",")));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
