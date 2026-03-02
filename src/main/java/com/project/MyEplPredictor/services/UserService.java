@@ -6,6 +6,7 @@ import com.project.MyEplPredictor.DTO.UserDto;
 import com.project.MyEplPredictor.models.User;
 import com.project.MyEplPredictor.repositories.UserRepo;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
@@ -40,7 +41,12 @@ public class UserService {
         user.setUsername(userDto.getUsername());
         user.setPassword(encoder.encode(userDto.getPassword()));
 
-        return new ResponseEntity<>(userRepo.save(user),HttpStatus.OK);
+        try {
+            return new ResponseEntity<>(userRepo.save(user), HttpStatus.OK);
+        } catch (DataIntegrityViolationException dive) {
+            // possibly another request inserted same email concurrently
+            return new ResponseEntity<>("Email already exists", HttpStatus.BAD_REQUEST);
+        }
     }
 
     public ResponseEntity<?> login(LoginDto request){
