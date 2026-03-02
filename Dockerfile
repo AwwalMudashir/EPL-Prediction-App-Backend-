@@ -9,4 +9,8 @@ RUN ./mvnw clean package -DskipTests
 
 EXPOSE 8080
 
-CMD ["java", "-jar", "target/*.jar"]
+# Look for your COPY line and change the destination to app.jar
+COPY target/*.jar app.jar
+
+# Then change your ENTRYPOINT to:
+ENTRYPOINT ["java", "-jar", "app.jar"]
