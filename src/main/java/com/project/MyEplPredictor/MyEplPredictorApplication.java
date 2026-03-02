@@ -9,6 +9,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class MyEplPredictorApplication {
 
 	public static void main(String[] args) {
+
 		SpringApplication.run(MyEplPredictorApplication.class, args);
 	}
 

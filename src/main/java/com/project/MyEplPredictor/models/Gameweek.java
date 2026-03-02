@@ -15,7 +15,7 @@ public class Gameweek {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
+//    week number
     private int weekNumber;
     private int season;
 
