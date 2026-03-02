@@ -16,7 +16,7 @@ import java.util.List;
 @Getter
 @Setter
 @ToString
-@Table(name = "")
+@Table(name = "app_users")
 public class User {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
