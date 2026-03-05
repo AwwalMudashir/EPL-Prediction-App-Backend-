@@ -34,4 +34,7 @@ public interface PredictionRepo extends JpaRepository<Prediction,Long> {
 
 	// convenience method used by global leaderboard calculation
 	List<Prediction> findByPointsAwardedIsNotNull();
+
+	// used when a fixture is reused across gameweeks – copy existing predictions
+	List<Prediction> findByPMatch_FixtureId(String fixtureId);
 }

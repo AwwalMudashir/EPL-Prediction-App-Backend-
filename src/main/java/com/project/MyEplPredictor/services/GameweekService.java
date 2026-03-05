@@ -11,8 +11,12 @@ import com.project.MyEplPredictor.DTO.MatchStatus;
 import com.project.MyEplPredictor.models.Gameweek;
 import com.project.MyEplPredictor.models.GameweekStatus;
 import com.project.MyEplPredictor.models.PMatch;
+import com.project.MyEplPredictor.models.FixturesCache;
+import com.project.MyEplPredictor.models.Prediction;
 import com.project.MyEplPredictor.repositories.GameweekRepo;
 import com.project.MyEplPredictor.repositories.MatchRepo;
+import com.project.MyEplPredictor.repositories.PredictionRepo;
+import com.project.MyEplPredictor.repositories.FixturesCacheRepo;
 import com.project.MyEplPredictor.services.PredictionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,9 +37,11 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Service
@@ -47,6 +53,8 @@ public class GameweekService {
 	private final GameweekRepo gameweekRepo;
 	private final MatchRepo matchRepo;
 	private final PredictionService predictionService;
+	private final PredictionRepo predictionRepo;
+	private final FixturesCacheRepo fixturesCacheRepo;
 	private final ObjectMapper objectMapper;
 	private final HttpClient httpClient;
 	private final String rapidApiKey;
@@ -58,6 +66,8 @@ public class GameweekService {
 	public GameweekService(GameweekRepo gameweekRepo,
 						   MatchRepo matchRepo,
 					   PredictionService predictionService,
+		   PredictionRepo predictionRepo,
+		   FixturesCacheRepo fixturesCacheRepo,
                            DataSource dataSource,
                            @Value("${bet365.api-key}") String rapidApiKey,
                            @Value("${bet365.base-url:https://bet36528.p.rapidapi.com}") String bet365BaseUrl,
@@ -65,7 +75,9 @@ public class GameweekService {
 		this.gameweekRepo = gameweekRepo;
 		this.matchRepo = matchRepo;
 		this.predictionService = predictionService;
-		this.dataSource = dataSource;
+		this.predictionRepo = predictionRepo;
+		this.fixturesCacheRepo = fixturesCacheRepo;
+        this.dataSource = dataSource;
         this.rapidApiKey = rapidApiKey;
         this.bet365BaseUrl = bet365BaseUrl;
         this.tournamentId = tournamentId;
@@ -511,28 +523,154 @@ public class GameweekService {
 	 */
 	@Scheduled(cron = "0 0 2 * * ?") // every day at 2 AM
 	public void dailyScoreUpdater() {
-		log.info("running daily score sync");
-		List<Gameweek> weeks = gameweekRepo.findAll();
-		for (Gameweek gw : weeks) {
-			try {
-				List<PMatch> pending = matchRepo.findByGameweekId(gw.getId()).stream()
-					.filter(m -> m.getStatus() != MatchStatus.FINISHED)
-					.toList();
-				if (!pending.isEmpty()) {
-					syncResultsForGameweek(gw.getId());
-				}
-				boolean hasUnfinished = matchRepo.existsByGameweekIdAndStatusNot(gw.getId(), MatchStatus.FINISHED);
-				if (!hasUnfinished && gw.getStatus() != GameweekStatus.COMPLETED) {
-					gw.setStatus(GameweekStatus.COMPLETED);
-					gameweekRepo.save(gw);
-				}
-			} catch (Exception e) {
-				log.error("error during daily sync for gameweek {}", gw.getId(), e);
+        log.info("running daily fixture/score sync");
+
+        // fetch latest fixtures from external API
+        List<FixturePayload> newFixtures = fetchFixturesFromApi();
+        boolean fixturesChanged = checkAndUpdateCache(newFixtures);
+        if (fixturesChanged) {
+            log.info("fixtures response changed, re-evaluating gameweeks");
+            // update/insert matches according to the new list
+            syncFixturesFromApi();
+            // if the active gameweek no longer matches the new set, start a new one
+            evaluateNewGameweek(newFixtures);
+        }
+
+        // now update scores for each gameweek as before
+        List<Gameweek> weeks = gameweekRepo.findAll();
+        for (Gameweek gw : weeks) {
+            try {
+                List<PMatch> pending = matchRepo.findByGameweekId(gw.getId()).stream()
+                    .filter(m -> m.getStatus() != MatchStatus.FINISHED)
+                    .toList();
+                if (!pending.isEmpty()) {
+                    syncResultsForGameweek(gw.getId());
+                }
+                boolean hasUnfinished = matchRepo.existsByGameweekIdAndStatusNot(gw.getId(), MatchStatus.FINISHED);
+                if (!hasUnfinished && gw.getStatus() != GameweekStatus.COMPLETED) {
+                    gw.setStatus(GameweekStatus.COMPLETED);
+                    gameweekRepo.save(gw);
+                }
+            } catch (Exception e) {
+                log.error("error during daily sync for gameweek {}", gw.getId(), e);
+            }
+        }
+    }
+	private record FixturePayload(String fixtureId, String homeTeam, String awayTeam, LocalDateTime kickoff) {
+	}
+
+	// simple record for caching purpose
+	private boolean checkAndUpdateCache(List<FixturePayload> newFixtures) {
+		try {
+			List<String> newIds = newFixtures.stream()
+				.map(FixturePayload::fixtureId)
+				.toList();
+			FixturesCache cache = fixturesCacheRepo.findById(1L).orElse(null);
+			if (cache == null) {
+				cache = new FixturesCache();
+				cache.setJsonPayload(objectMapper.writeValueAsString(newIds));
+				cache.setUpdatedAt(LocalDateTime.now());
+				fixturesCacheRepo.save(cache);
+				return true;
 			}
+			List<String> oldIds = objectMapper.readValue(cache.getJsonPayload(),
+				new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {});
+			if (!new HashSet<>(oldIds).equals(new HashSet<>(newIds))) {
+				cache.setJsonPayload(objectMapper.writeValueAsString(newIds));
+				cache.setUpdatedAt(LocalDateTime.now());
+				fixturesCacheRepo.save(cache);
+				return true;
+			}
+		} catch (Exception e) {
+			log.warn("unable to compare fixtures cache", e);
+		}
+		return false;
+	}
+
+	private void evaluateNewGameweek(List<FixturePayload> newFixtures) {
+		Optional<Gameweek> activeOpt = gameweekRepo.findFirstByStatusOrderByStartDateAsc(GameweekStatus.ACTIVE);
+		if (activeOpt.isEmpty()) {
+			return;
+		}
+		Gameweek active = activeOpt.get();
+		Set<String> activeIds = matchRepo.findByGameweekId(active.getId()).stream()
+			.map(PMatch::getFixtureId)
+			.filter(Objects::nonNull)
+			.collect(Collectors.toSet());
+		Set<String> newIds = newFixtures.stream()
+			.map(FixturePayload::fixtureId)
+			.filter(Objects::nonNull)
+			.collect(Collectors.toSet());
+		if (!activeIds.equals(newIds)) {
+			log.info("detected fixture set difference for active week {}", active.getWeekNumber());
+			// finalize remaining matches from old week
+			syncResultsForGameweek(active.getId());
+			// any removed fixtures should be marked finished
+			Set<String> removed = new HashSet<>(activeIds);
+			removed.removeAll(newIds);
+			for (String fid : removed) {
+				matchRepo.findByFixtureId(fid).ifPresent(m -> {
+					if (m.getStatus() != MatchStatus.FINISHED) {
+						m.setStatus(MatchStatus.FINISHED);
+						matchRepo.save(m);
+						predictionService.scorePredictionsForMatch(m.getId());
+					}
+				});
+			}
+			boolean hasUnfinished = matchRepo.existsByGameweekIdAndStatusNot(active.getId(), MatchStatus.FINISHED);
+			if (!hasUnfinished) {
+				active.setStatus(GameweekStatus.COMPLETED);
+				gameweekRepo.save(active);
+			}
+			createGameweekWithFixtures(newFixtures);
 		}
 	}
 
-	private record FixturePayload(String fixtureId, String homeTeam, String awayTeam, LocalDateTime kickoff) {
+	private CreateGameweekResponseDto createGameweekWithFixtures(List<FixturePayload> fixtures) {
+		LocalDateTime now = LocalDateTime.now();
+		LocalDateTime end = now.plusWeeks(1);
+		Gameweek gw = new Gameweek();
+		gw.setStartDate(now);
+		gw.setEndDate(end);
+		Integer maxWeek = gameweekRepo.findMaxWeekNumber();
+		int nextWeek = (maxWeek == null ? 0 : maxWeek) + 1;
+		gw.setWeekNumber(nextWeek);
+		gw.setSeason(now.getYear());
+		gw.setStatus(GameweekStatus.ACTIVE);
+		gw = gameweekRepo.save(gw);
+
+		List<PMatch> saved = new ArrayList<>();
+		for (FixturePayload f : fixtures) {
+			PMatch pm = new PMatch();
+			pm.setFixtureId(f.fixtureId());
+			pm.setHomeTeam(f.homeTeam());
+			pm.setAwayTeam(f.awayTeam());
+			pm.setKickoffTime(f.kickoff());
+			pm.setStatus(MatchStatus.UPCOMING);
+			pm.setGameweek(gw);
+			saved.add(pm);
+		}
+		if (!saved.isEmpty()) {
+			saved = matchRepo.saveAll(saved);
+		}
+
+		// copy over any previous predictions for reused fixtures
+		for (PMatch pm : saved) {
+			List<Prediction> oldPreds = predictionRepo.findByPMatch_FixtureId(pm.getFixtureId());
+			for (Prediction op : oldPreds) {
+				Prediction copy = new Prediction();
+				copy.setUser(op.getUser());
+				copy.setPredictedHomeScore(op.getPredictedHomeScore());
+				copy.setPredictedAwayScore(op.getPredictedAwayScore());
+				copy.setPMatch(pm);
+				predictionRepo.save(copy);
+			}
+		}
+
+		CreateGameweekResponseDto result = new CreateGameweekResponseDto();
+		result.setGameweek(toDto(gw));
+		result.setMatches(saved.stream().map(this::toMatchDto).collect(Collectors.toList()));
+		return result;
 	}
 
 	private record ResultPayload(String fixtureId, Integer homeScore, Integer awayScore) {
